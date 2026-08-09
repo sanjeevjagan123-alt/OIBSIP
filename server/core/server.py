@@ -1,4 +1,4 @@
-﻿"""TCP listener and lifecycle management for the chat server."""
+"""TCP listener and lifecycle management for the chat server."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from common.config_loader import AppConfig
+from server.core.client_handler import ClientHandler
 
 if TYPE_CHECKING:
     import logging
@@ -23,6 +24,7 @@ class ChatServer:
     _server_socket: socket.socket | None = field(default=None, init=False, repr=False)
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _accept_thread: threading.Thread | None = field(default=None, init=False, repr=False)
+    _client_handlers: list[ClientHandler] = field(default_factory=list, init=False, repr=False)
 
     def run(self) -> None:
         """Start the listener and block until shutdown."""
@@ -42,6 +44,10 @@ class ChatServer:
             return
 
         self._stop_event.set()
+        for handler in list(self._client_handlers):
+            handler.close()
+        self._client_handlers.clear()
+
         if self._server_socket is not None:
             try:
                 self._server_socket.shutdown(socket.SHUT_RDWR)
@@ -55,14 +61,22 @@ class ChatServer:
         self.logger.info("Server shut down cleanly")
 
     def _install_signal_handlers(self) -> None:
+        if threading.current_thread() is not threading.main_thread():
+            self.logger.debug("Skipping signal handler registration (not in main thread)")
+            return
+
         def handle_signal(signum: int, _frame: object) -> None:
             self.logger.info("Received signal %s; shutting down", signum)
             self.shutdown()
 
-        signal.signal(signal.SIGINT, handle_signal)
+        try:
+            signal.signal(signal.SIGINT, handle_signal)
+        except ValueError:
+            pass
+
         try:
             signal.signal(signal.SIGTERM, handle_signal)
-        except AttributeError:
+        except (AttributeError, ValueError):
             self.logger.debug("SIGTERM not available in this environment")
 
     def _create_listener(self) -> None:
@@ -83,9 +97,9 @@ class ChatServer:
             except OSError:
                 break
             self.logger.info("Accepted connection from %s:%s", *client_address)
-            try:
-                client_socket.close()
-            except OSError:
-                pass
+            handler = ClientHandler(client_socket, client_address, self.config, self.logger)
+            self._client_handlers.append(handler)
+            handler.start()
 
         self.logger.debug("Accept loop exited")
+

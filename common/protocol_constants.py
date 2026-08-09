@@ -1,4 +1,4 @@
-﻿"""Shared protocol constants for the chat application."""
+"""Shared protocol constants for the chat application."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ ACTION_JOIN_ROOM = "join_room"
 ACTION_LEAVE_ROOM = "leave_room"
 ACTION_GET_HISTORY = "get_history"
 ACTION_DISCONNECT = "disconnect"
+ACTION_PING = "ping"
 
 EVENT_RESPONSE = "response"
 EVENT_PRESENCE_UPDATE = "presence_update"
@@ -40,6 +41,7 @@ __all__ = [
     "ACTION_JOIN_ROOM",
     "ACTION_LEAVE_ROOM",
     "ACTION_LOGIN",
+    "ACTION_PING",
     "ACTION_REGISTER",
     "ACTION_SEND_MESSAGE",
     "ACTION_TYPING",
