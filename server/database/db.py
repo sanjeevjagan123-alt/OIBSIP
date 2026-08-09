@@ -158,6 +158,48 @@ class DatabaseManager:
                 "created_at": str(row["created_at"]),
             }
 
+    def list_rooms(self) -> list[dict[str, Any]]:
+        """List all rooms with member counts."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT r.id, r.name, r.created_by, r.created_at, COUNT(rm.user_id) AS member_count
+                FROM rooms r
+                LEFT JOIN room_members rm ON r.id = rm.room_id
+                GROUP BY r.id
+                ORDER BY r.name COLLATE NOCASE;
+                """
+            )
+            rows = cursor.fetchall()
+            rooms = []
+            for row in rows:
+                rooms.append({
+                    "id": row["id"],
+                    "name": row["name"],
+                    "created_by": row["created_by"],
+                    "created_at": str(row["created_at"]),
+                    "member_count": row["member_count"],
+                })
+            return rooms
+
+    def get_room_members(self, room_id: int) -> list[dict[str, Any]]:
+        """Return list of members (id, username) for a given room id."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT u.id, u.username
+                FROM room_members rm
+                JOIN users u ON rm.user_id = u.id
+                WHERE rm.room_id = ?
+                ORDER BY u.username COLLATE NOCASE;
+                """,
+                (room_id,)
+            )
+            rows = cursor.fetchall()
+            return [{"id": r["id"], "username": r["username"]} for r in rows]
+
     def join_room(self, room_id: int, user_id: int) -> None:
         """Add a user to a room."""
         with self._get_connection() as conn:

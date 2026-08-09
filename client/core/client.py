@@ -7,11 +7,13 @@ import socket
 import threading
 from typing import Any, Callable, Self
 
-from client.core.protocol import recv_frame, send_frame
+from client.core.protocol import recv_frame, send_frame, ProtocolError
 from common.protocol_constants import (
     ACTION_CREATE_ROOM,
     ACTION_DISCONNECT,
     ACTION_GET_HISTORY,
+    ACTION_GET_ROOMS,
+    ACTION_GET_ROOM_MEMBERS,
     ACTION_JOIN_ROOM,
     ACTION_LEAVE_ROOM,
     ACTION_LOGIN,
@@ -124,6 +126,14 @@ class ChatClient:
             "limit": limit,
         })
 
+    def get_rooms(self) -> dict[str, Any]:
+        """Request available rooms from server."""
+        return self.send_request(ACTION_GET_ROOMS)
+
+    def get_room_members(self, room_name: str) -> dict[str, Any]:
+        """Request room member list for a room by name."""
+        return self.send_request(ACTION_GET_ROOM_MEMBERS, {"room_name": room_name})
+
     # ---- Asynchronous Event Listener ----
 
     def add_event_callback(self, callback: Callable[[dict[str, Any]], None]) -> None:
@@ -181,7 +191,8 @@ class ChatClient:
                 send_frame(self._socket, message)
                 # Read optional server disconnect acknowledgment response
                 recv_frame(self._socket)
-            except (OSError, ConnectionError):
+            except (OSError, ConnectionError, ProtocolError):
+                # Handle network/format errors during final disconnect read gracefully
                 pass
             finally:
                 self.close()

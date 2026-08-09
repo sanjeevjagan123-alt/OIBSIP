@@ -23,6 +23,21 @@ class RoomManager:
         self._rooms: dict[str, set[int]] = {}
         self._lock = threading.RLock()
 
+    def get_rooms(self) -> list[dict[str, Any]]:
+        """Return available rooms and member counts."""
+        # Prefer DB definitive list, but augment with in-memory counts when available
+        rooms = self.db.list_rooms()
+        with self._lock:
+            updated = []
+            for r in rooms:
+                name_key = r["name"].lower()
+                member_set = self._rooms.get(name_key)
+                if member_set is not None:
+                    r = dict(r)
+                    r["member_count"] = max(r.get("member_count", 0), len(member_set))
+                updated.append(r)
+            return updated
+
     def init_default_room(self, default_name: str = "general") -> None:
         """Ensure the default public room exists in database and memory."""
         with self._lock:

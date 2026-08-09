@@ -12,6 +12,8 @@ from common.protocol_constants import (
     ACTION_CREATE_ROOM,
     ACTION_DISCONNECT,
     ACTION_GET_HISTORY,
+    ACTION_GET_ROOMS,
+    ACTION_GET_ROOM_MEMBERS,
     ACTION_JOIN_ROOM,
     ACTION_LEAVE_ROOM,
     ACTION_LOGIN,
@@ -178,6 +180,10 @@ class ClientHandler(threading.Thread):
             }
         elif action == ACTION_CREATE_ROOM:
             return self._handle_create_room(payload)
+        elif action == ACTION_GET_ROOMS:
+            return self._handle_get_rooms(payload)
+        elif action == ACTION_GET_ROOM_MEMBERS:
+            return self._handle_get_room_members(payload)
         elif action == ACTION_JOIN_ROOM:
             return self._handle_join_room(payload)
         elif action == ACTION_LEAVE_ROOM:
@@ -674,6 +680,55 @@ class ClientHandler(threading.Thread):
             "action": ACTION_GET_HISTORY,
             "status": STATUS_SUCCESS,
             "payload": {"messages": messages},
+        }
+
+    def _handle_get_rooms(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return the list of available rooms."""
+        auth_err = self._require_auth()
+        if auth_err is not None:
+            return auth_err
+        if self.room_manager is None:
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "Room management not configured on server.",
+            }
+        rooms = self.room_manager.get_rooms()
+        return {
+            "event": EVENT_RESPONSE,
+            "action": ACTION_GET_ROOMS,
+            "status": STATUS_SUCCESS,
+            "payload": {"rooms": rooms},
+        }
+
+    def _handle_get_room_members(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return the member list for a room by name."""
+        auth_err = self._require_auth()
+        if auth_err is not None:
+            return auth_err
+        room_name = payload.get("room_name")
+        if not room_name or not isinstance(room_name, str):
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "room_name is required.",
+            }
+        room = self.room_manager.db.get_room_by_name(room_name.strip())
+        if room is None:
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_ROOM_NOT_FOUND,
+                "message": f"Room '{room_name}' does not exist.",
+            }
+        members = self.room_manager.db.get_room_members(room["id"])
+        return {
+            "event": EVENT_RESPONSE,
+            "action": ACTION_GET_ROOM_MEMBERS,
+            "status": STATUS_SUCCESS,
+            "payload": {"members": members},
         }
 
     def close(self) -> None:

@@ -10,6 +10,8 @@ ACTION_CREATE_ROOM = "create_room"
 ACTION_JOIN_ROOM = "join_room"
 ACTION_LEAVE_ROOM = "leave_room"
 ACTION_GET_HISTORY = "get_history"
+ACTION_GET_ROOMS = "get_rooms"
+ACTION_GET_ROOM_MEMBERS = "get_room_members"
 ACTION_DISCONNECT = "disconnect"
 ACTION_PING = "ping"
 
@@ -41,6 +43,8 @@ __all__ = [
     "ACTION_CREATE_ROOM",
     "ACTION_DISCONNECT",
     "ACTION_GET_HISTORY",
+    "ACTION_GET_ROOMS",
+    "ACTION_GET_ROOM_MEMBERS",
     "ACTION_JOIN_ROOM",
     "ACTION_LEAVE_ROOM",
     "ACTION_LOGIN",
