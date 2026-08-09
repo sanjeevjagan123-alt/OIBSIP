@@ -12,6 +12,8 @@ from common.config_loader import AppConfig
 from server.core.client_handler import ClientHandler
 from server.database.db import DatabaseManager
 from server.logic.auth import AuthManager
+from server.logic.client_registry import ClientRegistry
+from server.logic.rooms import RoomManager
 
 if TYPE_CHECKING:
     import logging
@@ -25,6 +27,8 @@ class ChatServer:
     logger: logging.Logger
     db: DatabaseManager | None = field(default=None, repr=False)
     auth_manager: AuthManager | None = field(default=None, repr=False)
+    client_registry: ClientRegistry | None = field(default=None, repr=False)
+    room_manager: RoomManager | None = field(default=None, repr=False)
     _server_socket: socket.socket | None = field(default=None, init=False, repr=False)
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _accept_thread: threading.Thread | None = field(default=None, init=False, repr=False)
@@ -40,6 +44,20 @@ class ChatServer:
                 db=self.db,
                 password_iterations=self.config.password_iterations,
             )
+
+        if self.client_registry is None:
+            self.client_registry = ClientRegistry()
+
+        if self.room_manager is None:
+            self.room_manager = RoomManager(
+                db=self.db,
+                client_registry=self.client_registry,
+                logger=self.logger,
+            )
+
+        # Ensure the default #general room exists
+        self.room_manager.init_default_room("general")
+        self.logger.info("Default room '#general' initialized")
 
     def run(self) -> None:
         """Start the listener and block until shutdown."""
@@ -118,9 +136,10 @@ class ChatServer:
                 self.config,
                 self.logger,
                 auth_manager=self.auth_manager,
+                client_registry=self.client_registry,
+                room_manager=self.room_manager,
             )
             self._client_handlers.append(handler)
             handler.start()
 
         self.logger.debug("Accept loop exited")
-

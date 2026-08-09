@@ -1,4 +1,4 @@
-﻿"""Load and validate application configuration."""
+"""Load and validate application configuration."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ class AppConfig:
     database_path: str
     log_level: str = "INFO"
     max_payload_bytes: int = 10 * 1024 * 1024
+    max_message_length: int = 4096
     rate_limit_per_second: int = 5
     rate_limit_burst: int = 10
     password_iterations: int = 100000
@@ -43,6 +44,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     database_path = _require(raw.get("database_path"), "database_path", str)
     log_level = str(raw.get("log_level", "INFO"))
     max_payload_bytes = int(raw.get("max_payload_bytes", 10 * 1024 * 1024))
+    max_message_length = int(raw.get("max_message_length", 4096))
     rate_limit_per_second = int(raw.get("rate_limit_per_second", 5))
     rate_limit_burst = int(raw.get("rate_limit_burst", 10))
     password_iterations = int(raw.get("password_iterations", 100000))
@@ -51,6 +53,8 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         raise ValueError("Configuration field 'port' must be between 1 and 65535.")
     if max_payload_bytes <= 0:
         raise ValueError("Configuration field 'max_payload_bytes' must be positive.")
+    if max_message_length <= 0:
+        raise ValueError("Configuration field 'max_message_length' must be positive.")
     if rate_limit_per_second <= 0:
         raise ValueError("Configuration field 'rate_limit_per_second' must be positive.")
     if rate_limit_burst <= 0:
@@ -64,6 +68,7 @@ def load_config(path: str | Path = DEFAULT_CONFIG_PATH) -> AppConfig:
         database_path=database_path,
         log_level=log_level,
         max_payload_bytes=max_payload_bytes,
+        max_message_length=max_message_length,
         rate_limit_per_second=rate_limit_per_second,
         rate_limit_burst=rate_limit_burst,
         password_iterations=password_iterations,
