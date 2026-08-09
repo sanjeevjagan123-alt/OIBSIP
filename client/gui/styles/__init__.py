@@ -1,0 +1,1 @@
+﻿"""Client GUI styles package."""

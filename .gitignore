@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyc
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+.virtualenv
+
+# Environment Variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+server.log
+server.log.*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+data/
+
+# Windows
+Thumbs.db
+Desktop.ini
+*.lnk
+
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
