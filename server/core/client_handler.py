@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING, Any
 from client.core.protocol import ProtocolError, recv_frame, send_frame
 from common.protocol_constants import (
     ACTION_DISCONNECT,
+    ACTION_LOGIN,
     ACTION_PING,
+    ACTION_REGISTER,
     ERROR_INVALID_REQUEST,
     EVENT_ERROR,
     EVENT_RESPONSE,
@@ -20,6 +22,7 @@ from common.protocol_constants import (
 if TYPE_CHECKING:
     import logging
     from common.config_loader import AppConfig
+    from server.logic.auth import AuthManager
 
 
 class ClientHandler(threading.Thread):
@@ -31,12 +34,15 @@ class ClientHandler(threading.Thread):
         client_address: tuple[str, int],
         config: AppConfig,
         logger: logging.Logger,
+        auth_manager: AuthManager | None = None,
     ) -> None:
         super().__init__(daemon=True)
         self.client_socket = client_socket
         self.client_address = client_address
         self.config = config
         self.logger = logger
+        self.auth_manager = auth_manager
+        self.authenticated_user: dict[str, Any] | None = None
         self._stop_event = threading.Event()
 
     def run(self) -> None:
@@ -65,7 +71,7 @@ class ClientHandler(threading.Thread):
                         pass
                     break
 
-                self.logger.debug("Received request from %s:%s: %s", self.client_address[0], self.client_address[1], request)
+                self.logger.debug("Received request from %s:%s: action=%s", self.client_address[0], self.client_address[1], request.get("action"))
                 response = self._route_request(request)
                 if response is not None:
                     send_frame(self.client_socket, response)
@@ -82,6 +88,15 @@ class ClientHandler(threading.Thread):
     def _route_request(self, request: dict[str, Any]) -> dict[str, Any]:
         """Dispatch incoming action to appropriate logic handler."""
         action = request.get("action")
+        payload = request.get("payload", {})
+        if not isinstance(payload, dict):
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "Payload must be a JSON object.",
+            }
+
         if action == ACTION_PING:
             return {
                 "event": EVENT_RESPONSE,
@@ -89,6 +104,61 @@ class ClientHandler(threading.Thread):
                 "status": STATUS_SUCCESS,
                 "payload": {"message": "pong"},
             }
+        elif action == ACTION_REGISTER:
+            if self.auth_manager is None:
+                return {
+                    "event": EVENT_ERROR,
+                    "status": STATUS_ERROR,
+                    "error_code": ERROR_INVALID_REQUEST,
+                    "message": "Authentication manager not configured on server.",
+                }
+            username = payload.get("username")
+            password = payload.get("password")
+            success, err_code, err_msg, user_info = self.auth_manager.register_user(username, password)
+            if success:
+                self.logger.info("Successfully registered user '%s' from %s:%s", username, *self.client_address)
+                return {
+                    "event": EVENT_RESPONSE,
+                    "action": ACTION_REGISTER,
+                    "status": STATUS_SUCCESS,
+                    "payload": user_info,
+                }
+            else:
+                self.logger.warning("Failed registration attempt for user '%s': %s", username, err_msg)
+                return {
+                    "event": EVENT_ERROR,
+                    "status": STATUS_ERROR,
+                    "error_code": err_code,
+                    "message": err_msg,
+                }
+        elif action == ACTION_LOGIN:
+            if self.auth_manager is None:
+                return {
+                    "event": EVENT_ERROR,
+                    "status": STATUS_ERROR,
+                    "error_code": ERROR_INVALID_REQUEST,
+                    "message": "Authentication manager not configured on server.",
+                }
+            username = payload.get("username")
+            password = payload.get("password")
+            success, err_code, err_msg, user_info = self.auth_manager.authenticate_user(username, password)
+            if success:
+                self.authenticated_user = user_info
+                self.logger.info("User '%s' authenticated successfully from %s:%s", username, *self.client_address)
+                return {
+                    "event": EVENT_RESPONSE,
+                    "action": ACTION_LOGIN,
+                    "status": STATUS_SUCCESS,
+                    "payload": user_info,
+                }
+            else:
+                self.logger.warning("Authentication failed for user '%s' from %s:%s", username, *self.client_address)
+                return {
+                    "event": EVENT_ERROR,
+                    "status": STATUS_ERROR,
+                    "error_code": err_code,
+                    "message": err_msg,
+                }
         elif action == ACTION_DISCONNECT:
             return {
                 "event": EVENT_RESPONSE,

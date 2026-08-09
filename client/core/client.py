@@ -6,7 +6,13 @@ import socket
 from typing import Any, Self
 
 from client.core.protocol import recv_frame, send_frame
-from common.protocol_constants import ACTION_DISCONNECT, ACTION_PING
+from common.protocol_constants import (
+    ACTION_DISCONNECT,
+    ACTION_LOGIN,
+    ACTION_PING,
+    ACTION_REGISTER,
+    STATUS_SUCCESS,
+)
 
 
 class ChatClient:
@@ -17,6 +23,7 @@ class ChatClient:
         self.port = port
         self.timeout = timeout
         self._socket: socket.socket | None = None
+        self.current_user: dict[str, Any] | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -53,6 +60,19 @@ class ChatClient:
         """Send a PING request to the server and return the response."""
         return self.send_request(ACTION_PING)
 
+    def register(self, username: str, password: str) -> dict[str, Any]:
+        """Send a user registration request."""
+        payload = {"username": username, "password": password}
+        return self.send_request(ACTION_REGISTER, payload)
+
+    def login(self, username: str, password: str) -> dict[str, Any]:
+        """Send a user login request and update current_user on success."""
+        payload = {"username": username, "password": password}
+        response = self.send_request(ACTION_LOGIN, payload)
+        if response.get("status") == STATUS_SUCCESS:
+            self.current_user = response.get("payload")
+        return response
+
     def disconnect(self) -> None:
         """Send a disconnect action if connected, then close the socket."""
         if self._socket is not None:
@@ -68,6 +88,7 @@ class ChatClient:
 
     def close(self) -> None:
         """Close the underlying TCP socket."""
+        self.current_user = None
         if self._socket is not None:
             try:
                 self._socket.shutdown(socket.SHUT_RDWR)

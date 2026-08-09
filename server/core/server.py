@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 
 from common.config_loader import AppConfig
 from server.core.client_handler import ClientHandler
+from server.database.db import DatabaseManager
+from server.logic.auth import AuthManager
 
 if TYPE_CHECKING:
     import logging
@@ -21,10 +23,23 @@ class ChatServer:
 
     config: AppConfig
     logger: logging.Logger
+    db: DatabaseManager | None = field(default=None, repr=False)
+    auth_manager: AuthManager | None = field(default=None, repr=False)
     _server_socket: socket.socket | None = field(default=None, init=False, repr=False)
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False, repr=False)
     _accept_thread: threading.Thread | None = field(default=None, init=False, repr=False)
     _client_handlers: list[ClientHandler] = field(default_factory=list, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.db is None:
+            self.db = DatabaseManager(self.config.database_path)
+        self.db.init_db()
+
+        if self.auth_manager is None:
+            self.auth_manager = AuthManager(
+                db=self.db,
+                password_iterations=self.config.password_iterations,
+            )
 
     def run(self) -> None:
         """Start the listener and block until shutdown."""
@@ -97,7 +112,13 @@ class ChatServer:
             except OSError:
                 break
             self.logger.info("Accepted connection from %s:%s", *client_address)
-            handler = ClientHandler(client_socket, client_address, self.config, self.logger)
+            handler = ClientHandler(
+                client_socket,
+                client_address,
+                self.config,
+                self.logger,
+                auth_manager=self.auth_manager,
+            )
             self._client_handlers.append(handler)
             handler.start()
 
