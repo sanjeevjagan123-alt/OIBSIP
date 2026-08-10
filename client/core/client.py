@@ -47,11 +47,20 @@ class ChatClient:
 
     def connect(self) -> None:
         """Establish TCP connection to the server."""
+
+        # Clear stale responses from any previous connection session.
+        while True:
+            try:
+                self._response_queue.get_nowait()
+            except queue.Empty:
+                break
+
         if self._socket is not None:
             return
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(self.timeout)
+
         try:
             sock.connect((self.host, self.port))
             self._socket = sock
@@ -59,7 +68,11 @@ class ChatClient:
             sock.close()
             raise
 
-    def send_request(self, action: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    def send_request(
+        self,
+        action: str,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Send a framed JSON request and return the server's framed JSON response."""
         if self._socket is None:
             raise ConnectionError("Client is not connected to the server.")
@@ -70,7 +83,7 @@ class ChatClient:
         }
         send_frame(self._socket, message)
 
-        # If listener is active, get response from queue
+        # If listener is active, get response from queue.
         if self._listener_active:
             try:
                 return self._response_queue.get(timeout=self.timeout)
@@ -92,8 +105,10 @@ class ChatClient:
         """Send a user login request and update current_user on success."""
         payload = {"username": username, "password": password}
         response = self.send_request(ACTION_LOGIN, payload)
+
         if response.get("status") == STATUS_SUCCESS:
             self.current_user = response.get("payload")
+
         return response
 
     # ---- Stage 5: Chat Room Methods ----
@@ -110,21 +125,37 @@ class ChatClient:
         """Send a leave room request."""
         return self.send_request(ACTION_LEAVE_ROOM, {"room_name": room_name})
 
-    def send_chat_message(self, target_type: str, target_name: str, content: str) -> dict[str, Any]:
+    def send_chat_message(
+        self,
+        target_type: str,
+        target_name: str,
+        content: str,
+    ) -> dict[str, Any]:
         """Send a chat message (room or direct)."""
-        return self.send_request(ACTION_SEND_MESSAGE, {
-            "target_type": target_type,
-            "target_name": target_name,
-            "content": content,
-        })
+        return self.send_request(
+            ACTION_SEND_MESSAGE,
+            {
+                "target_type": target_type,
+                "target_name": target_name,
+                "content": content,
+            },
+        )
 
-    def get_history(self, target_type: str, target_name: str, limit: int = 50) -> dict[str, Any]:
+    def get_history(
+        self,
+        target_type: str,
+        target_name: str,
+        limit: int = 50,
+    ) -> dict[str, Any]:
         """Retrieve chat history for a room or user conversation."""
-        return self.send_request(ACTION_GET_HISTORY, {
-            "target_type": target_type,
-            "target_name": target_name,
-            "limit": limit,
-        })
+        return self.send_request(
+            ACTION_GET_HISTORY,
+            {
+                "target_type": target_type,
+                "target_name": target_name,
+                "limit": limit,
+            },
+        )
 
     def get_rooms(self) -> dict[str, Any]:
         """Request available rooms from server."""
@@ -132,11 +163,17 @@ class ChatClient:
 
     def get_room_members(self, room_name: str) -> dict[str, Any]:
         """Request room member list for a room by name."""
-        return self.send_request(ACTION_GET_ROOM_MEMBERS, {"room_name": room_name})
+        return self.send_request(
+            ACTION_GET_ROOM_MEMBERS,
+            {"room_name": room_name},
+        )
 
     # ---- Asynchronous Event Listener ----
 
-    def add_event_callback(self, callback: Callable[[dict[str, Any]], None]) -> None:
+    def add_event_callback(
+        self,
+        callback: Callable[[dict[str, Any]], None],
+    ) -> None:
         """Register a callback for asynchronous server push events."""
         self._event_callbacks.append(callback)
 
@@ -144,15 +181,20 @@ class ChatClient:
         """Start background thread that listens for server push events."""
         if self._listener_thread is not None:
             return
+
         self._stop_listener.clear()
         self._listener_active = True
-        self._listener_thread = threading.Thread(target=self._listener_loop, daemon=True)
+        self._listener_thread = threading.Thread(
+            target=self._listener_loop,
+            daemon=True,
+        )
         self._listener_thread.start()
 
     def stop_listener(self) -> None:
         """Stop the background listener thread."""
         self._stop_listener.set()
         self._listener_active = False
+
         if self._listener_thread is not None:
             self._listener_thread.join(timeout=2.0)
             self._listener_thread = None
@@ -162,6 +204,7 @@ class ChatClient:
         while not self._stop_listener.is_set():
             if self._socket is None:
                 break
+
             try:
                 frame = recv_frame(self._socket)
             except (ConnectionError, OSError):
@@ -169,11 +212,11 @@ class ChatClient:
             except Exception:
                 break
 
-            # Determine if this is a response to a request or a push event
+            # Determine if this is a response to a request or a push event.
             if frame.get("event") == EVENT_RESPONSE or frame.get("event") == "error":
                 self._response_queue.put(frame)
             else:
-                # Push event - invoke callbacks
+                # Push event - invoke callbacks.
                 for callback in self._event_callbacks:
                     try:
                         callback(frame)
@@ -185,14 +228,17 @@ class ChatClient:
     def disconnect(self) -> None:
         """Send a disconnect action if connected, then close the socket."""
         self.stop_listener()
+
         if self._socket is not None:
             try:
                 message = {"action": ACTION_DISCONNECT}
                 send_frame(self._socket, message)
-                # Read optional server disconnect acknowledgment response
+
+                # Read optional server disconnect acknowledgment response.
                 recv_frame(self._socket)
+
             except (OSError, ConnectionError, ProtocolError):
-                # Handle network/format errors during final disconnect read gracefully
+                # Handle network/format errors during final disconnect read gracefully.
                 pass
             finally:
                 self.close()
@@ -200,21 +246,37 @@ class ChatClient:
     def close(self) -> None:
         """Close the underlying TCP socket."""
         self.stop_listener()
+
+        # Clear any responses left over from the current/previous session.
+        while True:
+            try:
+                self._response_queue.get_nowait()
+            except queue.Empty:
+                break
+
         self.current_user = None
+
         if self._socket is not None:
             try:
                 self._socket.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
+
             try:
                 self._socket.close()
             except OSError:
                 pass
+
             self._socket = None
 
     def __enter__(self) -> Self:
         self.connect()
         return self
 
-    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+    def __exit__(
+        self,
+        exc_type: object,
+        exc_val: object,
+        exc_tb: object,
+    ) -> None:
         self.disconnect()
