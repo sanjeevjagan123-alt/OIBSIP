@@ -242,7 +242,13 @@ class DatabaseManager:
             }
 
     def get_messages(self, target_type: str, target_id: int, limit: int = 50) -> list[dict[str, Any]]:
-        """Retrieve recent messages for a room or user conversation."""
+        """Retrieve recent messages for a room or user conversation.
+
+        For rooms this returns messages where target_type='room' and target_id=room_id.
+        For user conversations this returns messages where target_type='user' and
+        (sender_id = target_id AND target_id = requester) OR (sender_id = requester AND target_id = target_id).
+        Note: Use get_direct_messages_between for user-to-user conversations when requester identity is known.
+        """
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -255,6 +261,41 @@ class DatabaseManager:
                 LIMIT ?;
                 """,
                 (target_type, target_id, limit),
+            )
+            rows = cursor.fetchall()
+            messages = []
+            for row in reversed(rows):
+                messages.append({
+                    "message_id": row["id"],
+                    "sender_id": row["sender_id"],
+                    "sender_username": row["sender_username"],
+                    "target_type": row["target_type"],
+                    "target_id": row["target_id"],
+                    "content": row["content"],
+                    "timestamp": str(row["timestamp"]),
+                })
+            return messages
+
+    def get_direct_messages_between(self, user_a_id: int, user_b_id: int, limit: int = 50) -> list[dict[str, Any]]:
+        """Retrieve messages exchanged between two users (both directions), ordered chronologically up to `limit`.
+
+        Returns messages where target_type='user' and ((sender_id = user_a_id AND target_id = user_b_id)
+        OR (sender_id = user_b_id AND target_id = user_a_id)).
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT m.id, m.sender_id, u.username AS sender_username, m.target_type, m.target_id, m.content, m.timestamp
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                WHERE m.target_type = 'user' AND (
+                    (m.sender_id = ? AND m.target_id = ?) OR (m.sender_id = ? AND m.target_id = ?)
+                )
+                ORDER BY m.id DESC
+                LIMIT ?;
+                """,
+                (user_a_id, user_b_id, user_b_id, user_a_id, limit),
             )
             rows = cursor.fetchall()
             messages = []

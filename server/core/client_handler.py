@@ -672,8 +672,12 @@ class ClientHandler(threading.Thread):
                     "message": f"User '{target_name}' not found.",
                 }
             target_id = target_user["id"]
+            # For private conversations, return messages exchanged between the requester and the target user
+            requester_id = self.authenticated_user["user_id"]
+            messages = self.room_manager.db.get_direct_messages_between(requester_id, target_id, limit=limit)
 
-        messages = self.room_manager.db.get_messages(target_type, target_id, limit=limit)
+        if target_type == "room":
+            messages = self.room_manager.db.get_messages(target_type, target_id, limit=limit)
 
         return {
             "event": EVENT_RESPONSE,
