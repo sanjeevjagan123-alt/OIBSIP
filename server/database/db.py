@@ -78,12 +78,20 @@ class DatabaseManager:
                     target_type TEXT NOT NULL CHECK(target_type IN ('room', 'user')),
                     target_id INTEGER NOT NULL,
                     content TEXT NOT NULL,
+                    delivery_state TEXT NOT NULL DEFAULT 'sent' CHECK(delivery_state IN ('sent', 'delivered')),
                     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (sender_id) REFERENCES users(id)
                 );
                 """
             )
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_target ON messages(target_type, target_id, id DESC);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_delivery_state ON messages(delivery_state);")
+            cursor.execute(
+                "PRAGMA table_info(messages);"
+            )
+            columns = {row["name"] for row in cursor.fetchall()}
+            if "delivery_state" not in columns:
+                cursor.execute("ALTER TABLE messages ADD COLUMN delivery_state TEXT NOT NULL DEFAULT 'sent';")
 
             conn.commit()
 
@@ -238,8 +246,27 @@ class DatabaseManager:
                 "target_type": target_type,
                 "target_id": target_id,
                 "content": content,
+                "delivery_state": "sent",
                 "timestamp": str(row["timestamp"]) if row else "",
             }
+
+    def mark_message_delivered(self, message_id: int, recipient_user_id: int) -> bool:
+        """Mark a direct message as delivered if recipient matches target user."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                UPDATE messages
+                SET delivery_state = 'delivered'
+                WHERE id = ?
+                  AND target_type = 'user'
+                  AND target_id = ?
+                ;
+                """,
+                (message_id, recipient_user_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
 
     def get_messages(self, target_type: str, target_id: int, limit: int = 50) -> list[dict[str, Any]]:
         """Retrieve recent messages for a room or user conversation.
@@ -253,7 +280,7 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT m.id, m.sender_id, u.username AS sender_username, m.target_type, m.target_id, m.content, m.timestamp
+                SELECT m.id, m.sender_id, u.username AS sender_username, m.target_type, m.target_id, m.content, m.delivery_state, m.timestamp
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 WHERE m.target_type = ? AND m.target_id = ?
@@ -272,6 +299,7 @@ class DatabaseManager:
                     "target_type": row["target_type"],
                     "target_id": row["target_id"],
                     "content": row["content"],
+                    "delivery_state": row["delivery_state"],
                     "timestamp": str(row["timestamp"]),
                 })
             return messages
@@ -286,7 +314,7 @@ class DatabaseManager:
             cursor = conn.cursor()
             cursor.execute(
                 """
-                SELECT m.id, m.sender_id, u.username AS sender_username, m.target_type, m.target_id, m.content, m.timestamp
+                SELECT m.id, m.sender_id, u.username AS sender_username, m.target_type, m.target_id, m.content, m.delivery_state, m.timestamp
                 FROM messages m
                 JOIN users u ON m.sender_id = u.id
                 WHERE m.target_type = 'user' AND (
@@ -307,7 +335,7 @@ class DatabaseManager:
                     "target_type": row["target_type"],
                     "target_id": row["target_id"],
                     "content": row["content"],
+                    "delivery_state": row["delivery_state"],
                     "timestamp": str(row["timestamp"]),
                 })
             return messages
-

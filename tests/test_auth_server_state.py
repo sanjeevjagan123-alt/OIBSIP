@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import queue
 import tempfile
 import threading
 import time
@@ -56,6 +57,45 @@ class AuthServerStateTests(unittest.TestCase):
             self.assertIn(uid, rooms["general"])
         finally:
             client.disconnect()
+
+    def test_presence_online_offline_and_unexpected_disconnect(self) -> None:
+        observer = ChatClient(host=self.config.host, port=self.config.port, timeout=3.0)
+        user_client = ChatClient(host=self.config.host, port=self.config.port, timeout=3.0)
+        events: queue.Queue[dict] = queue.Queue()
+
+        observer.connect()
+        user_client.connect()
+        try:
+            observer.register("presence_observer", "Pass12345")
+            observer.login("presence_observer", "Pass12345")
+            observer.start_listener()
+            observer.add_event_callback(lambda event: events.put(event))
+
+            user_client.register("presence_user", "Pass12345")
+            user_client.login("presence_user", "Pass12345")
+
+            online_evt = None
+            for _ in range(20):
+                evt = events.get(timeout=1.0)
+                if evt.get("event") == "presence_update" and evt.get("payload", {}).get("username") == "presence_user":
+                    online_evt = evt
+                    break
+            self.assertIsNotNone(online_evt)
+            self.assertEqual(online_evt["payload"]["state"], "online")
+
+            user_client.close()
+
+            offline_evt = None
+            for _ in range(20):
+                evt = events.get(timeout=1.0)
+                if evt.get("event") == "presence_update" and evt.get("payload", {}).get("username") == "presence_user":
+                    offline_evt = evt
+                    break
+            self.assertIsNotNone(offline_evt)
+            self.assertEqual(offline_evt["payload"]["state"], "offline")
+        finally:
+            observer.disconnect()
+            user_client.close()
 
 
 if __name__ == "__main__":

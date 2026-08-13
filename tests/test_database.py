@@ -48,6 +48,24 @@ class DatabaseManagerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.db.create_user("charlie", "hash2", "salt2")
 
+    def test_message_delivery_state_persistence_and_update(self) -> None:
+        sender = self.db.create_user("sender", "h1", "s1")
+        recipient = self.db.create_user("recipient", "h2", "s2")
+        msg = self.db.save_message(sender["id"], "user", recipient["id"], "hello")
+        self.assertEqual(msg["delivery_state"], "sent")
+        updated = self.db.mark_message_delivered(msg["id"], recipient["id"])
+        self.assertTrue(updated)
+        history = self.db.get_direct_messages_between(sender["id"], recipient["id"], limit=10)
+        self.assertEqual(history[-1]["delivery_state"], "delivered")
+
+    def test_message_delivery_state_rejects_wrong_recipient(self) -> None:
+        sender = self.db.create_user("sender2", "h1", "s1")
+        recipient = self.db.create_user("recipient2", "h2", "s2")
+        other = self.db.create_user("other2", "h3", "s3")
+        msg = self.db.save_message(sender["id"], "user", recipient["id"], "hello")
+        updated = self.db.mark_message_delivered(msg["id"], other["id"])
+        self.assertFalse(updated)
+
 
 if __name__ == "__main__":
     unittest.main()

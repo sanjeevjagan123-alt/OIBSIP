@@ -112,3 +112,24 @@ class RoomManager:
                 send_frame(handler.client_socket, message_frame)
             except (OSError, ConnectionError) as exc:
                 self.logger.warning("Failed to broadcast message to client: %s", exc)
+
+    def broadcast_to_all(
+        self,
+        message_frame: dict[str, Any],
+        exclude_user_id: int | None = None,
+    ) -> None:
+        """Broadcast a message frame to all connected clients. Socket writes occur OUTSIDE the lock."""
+        target_handlers = []
+
+        with self._lock:
+            for handler in self.client_registry.get_all_clients():
+                auth_user = getattr(handler, "authenticated_user", None)
+                if exclude_user_id is not None and auth_user is not None and auth_user.get("user_id") == exclude_user_id:
+                    continue
+                target_handlers.append(handler)
+
+        for handler in target_handlers:
+            try:
+                send_frame(handler.client_socket, message_frame)
+            except (OSError, ConnectionError) as exc:
+                self.logger.warning("Failed to broadcast message to client: %s", exc)

@@ -17,6 +17,7 @@ from common.protocol_constants import (
     ACTION_JOIN_ROOM,
     ACTION_LEAVE_ROOM,
     ACTION_LOGIN,
+    ACTION_MESSAGE_DELIVERED,
     ACTION_PING,
     ACTION_REGISTER,
     ACTION_SEND_MESSAGE,
@@ -28,6 +29,7 @@ from common.protocol_constants import (
     ERROR_USER_NOT_FOUND,
     EVENT_ERROR,
     EVENT_NEW_MESSAGE,
+    EVENT_PRESENCE_UPDATE,
     EVENT_RESPONSE,
     EVENT_ROOM_UPDATE,
     STATUS_ERROR,
@@ -115,6 +117,9 @@ class ClientHandler(threading.Thread):
         if self.authenticated_user is not None:
             user_id = self.authenticated_user.get("user_id")
             if user_id is not None:
+                username = self.authenticated_user.get("username", "")
+                if self.room_manager is not None:
+                    self._broadcast_presence_update(username, "offline", exclude_user_id=user_id)
                 if self.room_manager is not None:
                     self.room_manager.remove_user_from_all_rooms(user_id)
                 if self.client_registry is not None:
@@ -190,6 +195,8 @@ class ClientHandler(threading.Thread):
             return self._handle_leave_room(payload)
         elif action == ACTION_SEND_MESSAGE:
             return self._handle_send_message(payload)
+        elif action == ACTION_MESSAGE_DELIVERED:
+            return self._handle_message_delivered(payload)
         elif action == ACTION_GET_HISTORY:
             return self._handle_get_history(payload)
         else:
@@ -257,6 +264,8 @@ class ClientHandler(threading.Thread):
             # Register in client registry
             if self.client_registry is not None:
                 self.client_registry.register_client(user_id, self)
+            if self.room_manager is not None:
+                self._broadcast_presence_update(username, "online", exclude_user_id=user_id)
 
             # Auto-join the default #general room
             if self.room_manager is not None:
@@ -536,6 +545,7 @@ class ClientHandler(threading.Thread):
                 "target_type": "room",
                 "target_name": room_name,
                 "content": content,
+                "delivery_state": msg["delivery_state"],
                 "timestamp": msg["timestamp"],
             },
         }
@@ -592,6 +602,7 @@ class ClientHandler(threading.Thread):
                         "target_type": "user",
                         "target_name": target_username,
                         "content": content,
+                        "delivery_state": msg["delivery_state"],
                         "timestamp": msg["timestamp"],
                     },
                 }
@@ -608,8 +619,55 @@ class ClientHandler(threading.Thread):
             "payload": {
                 "message_id": msg["id"],
                 "timestamp": msg["timestamp"],
+                "delivery_state": msg["delivery_state"],
             },
         }
+
+    def _handle_message_delivered(self, payload: dict[str, Any]) -> dict[str, Any]:
+        auth_err = self._require_auth()
+        if auth_err is not None:
+            return auth_err
+        if self.room_manager is None or self.room_manager.db is None:
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "Messaging not configured on server.",
+            }
+        message_id = payload.get("message_id")
+        if not isinstance(message_id, int):
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "message_id must be an integer.",
+            }
+        recipient_user_id = self.authenticated_user["user_id"]
+        updated = self.room_manager.db.mark_message_delivered(message_id, recipient_user_id)
+        if not updated:
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_UNAUTHORIZED,
+                "message": "You are not authorized to acknowledge this message.",
+            }
+        return {
+            "event": EVENT_RESPONSE,
+            "action": ACTION_MESSAGE_DELIVERED,
+            "status": STATUS_SUCCESS,
+            "payload": {"message_id": message_id, "delivery_state": "delivered"},
+        }
+
+    def _broadcast_presence_update(self, username: str, state: str, exclude_user_id: int | None = None) -> None:
+        if self.room_manager is None:
+            return
+        self.room_manager.broadcast_to_all(
+            {
+                "event": EVENT_PRESENCE_UPDATE,
+                "payload": {"username": username, "state": state},
+            },
+            exclude_user_id=exclude_user_id,
+        )
 
     # ---- Stage 5: History Handler ----
 

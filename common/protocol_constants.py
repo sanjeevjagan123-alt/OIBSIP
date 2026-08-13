@@ -5,6 +5,7 @@ from __future__ import annotations
 ACTION_REGISTER = "register"
 ACTION_LOGIN = "login"
 ACTION_SEND_MESSAGE = "send_message"
+ACTION_MESSAGE_DELIVERED = "message_delivered"
 ACTION_TYPING = "typing"
 ACTION_CREATE_ROOM = "create_room"
 ACTION_JOIN_ROOM = "join_room"
@@ -48,6 +49,7 @@ __all__ = [
     "ACTION_JOIN_ROOM",
     "ACTION_LEAVE_ROOM",
     "ACTION_LOGIN",
+    "ACTION_MESSAGE_DELIVERED",
     "ACTION_PING",
     "ACTION_REGISTER",
     "ACTION_SEND_MESSAGE",

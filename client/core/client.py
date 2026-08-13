@@ -17,6 +17,7 @@ from common.protocol_constants import (
     ACTION_JOIN_ROOM,
     ACTION_LEAVE_ROOM,
     ACTION_LOGIN,
+    ACTION_MESSAGE_DELIVERED,
     ACTION_PING,
     ACTION_REGISTER,
     ACTION_SEND_MESSAGE,
@@ -167,6 +168,10 @@ class ChatClient:
             ACTION_GET_ROOM_MEMBERS,
             {"room_name": room_name},
         )
+
+    def acknowledge_message_delivered(self, message_id: int) -> dict[str, Any]:
+        """Acknowledge direct-message delivery using persisted message_id."""
+        return self.send_request(ACTION_MESSAGE_DELIVERED, {"message_id": message_id})
 
     # ---- Asynchronous Event Listener ----
 
