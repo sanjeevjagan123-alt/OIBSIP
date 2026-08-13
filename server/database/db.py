@@ -84,14 +84,12 @@ class DatabaseManager:
                 );
                 """
             )
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_target ON messages(target_type, target_id, id DESC);")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_delivery_state ON messages(delivery_state);")
-            cursor.execute(
-                "PRAGMA table_info(messages);"
-            )
+            cursor.execute("PRAGMA table_info(messages);")
             columns = {row["name"] for row in cursor.fetchall()}
             if "delivery_state" not in columns:
                 cursor.execute("ALTER TABLE messages ADD COLUMN delivery_state TEXT NOT NULL DEFAULT 'sent';")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_target ON messages(target_type, target_id, id DESC);")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_delivery_state ON messages(delivery_state);")
 
             conn.commit()
 
