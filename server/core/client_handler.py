@@ -274,6 +274,28 @@ class ClientHandler(threading.Thread):
                 except ValueError:
                     pass  # Room might not exist yet if server init race
 
+            # Deliver any pending messages that arrived while offline
+            if self.room_manager is not None and self.room_manager.db is not None:
+                pending = self.room_manager.db.get_pending_messages_for_user(user_id)
+                for msg in pending:
+                    push_event = {
+                        "event": EVENT_NEW_MESSAGE,
+                        "payload": {
+                            "message_id": msg["message_id"],
+                            "sender_id": msg["sender_id"],
+                            "sender_username": msg["sender_username"],
+                            "target_type": "user",
+                            "target_name": self.authenticated_user.get("username", ""),
+                            "content": msg["content"],
+                            "timestamp": msg["timestamp"],
+                        },
+                    }
+                    try:
+                        send_frame(self.client_socket, push_event)
+                        self.room_manager.db.mark_message_delivered(msg["message_id"], user_id)
+                    except (OSError, ConnectionError) as exc:
+                        self.logger.warning("Failed to deliver pending message: %s", exc)
+
             self.logger.info("User '%s' authenticated successfully from %s:%s", username, *self.client_address)
             return {
                 "event": EVENT_RESPONSE,

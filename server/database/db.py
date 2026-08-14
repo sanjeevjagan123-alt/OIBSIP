@@ -337,3 +337,32 @@ class DatabaseManager:
                     "timestamp": str(row["timestamp"]),
                 })
             return messages
+
+    def get_pending_messages_for_user(self, user_id: int) -> list[dict[str, Any]]:
+        """Retrieve all undelivered ('sent' state) direct messages addressed to this user."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT m.id, m.sender_id, u.username AS sender_username, m.target_type, m.target_id, m.content, m.timestamp
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                WHERE m.target_type = 'user' AND m.target_id = ? AND m.delivery_state = 'sent'
+                ORDER BY m.id ASC;
+                """,
+                (user_id,),
+            )
+            rows = cursor.fetchall()
+            messages = []
+            for row in rows:
+                messages.append({
+                    "message_id": row["id"],
+                    "sender_id": row["sender_id"],
+                    "sender_username": row["sender_username"],
+                    "target_type": row["target_type"],
+                    "target_id": row["target_id"],
+                    "content": row["content"],
+                    "timestamp": str(row["timestamp"]),
+                })
+            return messages
+    
