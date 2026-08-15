@@ -7,6 +7,7 @@ ACTION_LOGIN = "login"
 ACTION_SEND_MESSAGE = "send_message"
 ACTION_MESSAGE_DELIVERED = "message_delivered"
 ACTION_TYPING = "typing"
+ACTION_SEARCH_MESSAGES = "search_messages"
 ACTION_CREATE_ROOM = "create_room"
 ACTION_JOIN_ROOM = "join_room"
 ACTION_LEAVE_ROOM = "leave_room"
@@ -54,6 +55,7 @@ __all__ = [
     "ACTION_REGISTER",
     "ACTION_SEND_MESSAGE",
     "ACTION_TYPING",
+    "ACTION_SEARCH_MESSAGES",
     "DEFAULT_ENCODING",
     "ERROR_INVALID_CREDENTIALS",
     "ERROR_INVALID_REQUEST",

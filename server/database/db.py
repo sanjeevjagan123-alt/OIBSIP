@@ -365,4 +365,84 @@ class DatabaseManager:
                     "timestamp": str(row["timestamp"]),
                 })
             return messages
+
+    def search_room_messages(self, room_id: int, query: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Search messages within a room for a case‑insensitive substring.
+
+        Returns messages where ``target_type='room'`` and ``target_id=room_id`` and the
+        ``content`` column contains ``query`` (case‑insensitive). Results are ordered
+        chronologically (oldest first) and limited by ``limit``.
+        """
+        if not isinstance(query, str) or not query:
+            return []
+        # SQLite ``LIKE`` is case‑insensitive for ASCII by default; we enforce lower‑casing
+        pattern = f"%{query.lower()}%"
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT m.id, m.sender_id, u.username AS sender_username, m.target_type, m.target_id, m.content, m.delivery_state, m.timestamp
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                WHERE m.target_type = 'room' AND m.target_id = ? AND LOWER(m.content) LIKE ?
+                ORDER BY m.id DESC
+                LIMIT ?;
+                """,
+                (room_id, pattern, limit),
+            )
+            rows = cursor.fetchall()
+            messages: list[dict[str, Any]] = []
+            for row in reversed(rows):
+                messages.append({
+                    "message_id": row["id"],
+                    "sender_id": row["sender_id"],
+                    "sender_username": row["sender_username"],
+                    "target_type": row["target_type"],
+                    "target_id": row["target_id"],
+                    "content": row["content"],
+                    "delivery_state": row["delivery_state"],
+                    "timestamp": str(row["timestamp"]),
+                })
+            return messages
+
+    def search_direct_messages(self, user_a_id: int, user_b_id: int, query: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Search direct messages between two users for a case‑insensitive substring.
+
+        Returns messages where ``target_type='user'`` and the two participants are
+        ``user_a_id`` and ``user_b_id`` (either direction) and ``content`` matches
+        ``query`` case‑insensitively. Results are ordered chronologically and limited
+        by ``limit``.
+        """
+        if not isinstance(query, str) or not query:
+            return []
+        pattern = f"%{query.lower()}%"
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT m.id, m.sender_id, u.username AS sender_username, m.target_type, m.target_id, m.content, m.delivery_state, m.timestamp
+                FROM messages m
+                JOIN users u ON m.sender_id = u.id
+                WHERE m.target_type = 'user' AND (
+                    (m.sender_id = ? AND m.target_id = ?) OR (m.sender_id = ? AND m.target_id = ?)
+                ) AND LOWER(m.content) LIKE ?
+                ORDER BY m.id DESC
+                LIMIT ?;
+                """,
+                (user_a_id, user_b_id, user_b_id, user_a_id, pattern, limit),
+            )
+            rows = cursor.fetchall()
+            messages: list[dict[str, Any]] = []
+            for row in reversed(rows):
+                messages.append({
+                    "message_id": row["id"],
+                    "sender_id": row["sender_id"],
+                    "sender_username": row["sender_username"],
+                    "target_type": row["target_type"],
+                    "target_id": row["target_id"],
+                    "content": row["content"],
+                    "delivery_state": row["delivery_state"],
+                    "timestamp": str(row["timestamp"]),
+                })
+            return messages
     

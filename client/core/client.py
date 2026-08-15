@@ -21,6 +21,8 @@ from common.protocol_constants import (
     ACTION_PING,
     ACTION_REGISTER,
     ACTION_SEND_MESSAGE,
+    ACTION_SEARCH_MESSAGES,
+    ACTION_TYPING,
     EVENT_RESPONSE,
     STATUS_SUCCESS,
 )
@@ -154,6 +156,46 @@ class ChatClient:
             {
                 "target_type": target_type,
                 "target_name": target_name,
+                "limit": limit,
+            },
+        )
+
+    def send_typing(self, target_type: str, target_name: str, is_typing: bool) -> dict[str, Any]:
+        """Notify the server that the user started or stopped typing.
+
+        ``target_type`` must be "room" or "user". ``target_name`` is the room name or the
+        username of the other participant. ``is_typing`` indicates whether typing has
+        started (True) or stopped (False). Returns the server's response frame.
+        """
+        return self.send_request(
+            ACTION_TYPING,
+            {
+                "target_type": target_type,
+                "target_name": target_name,
+                "is_typing": is_typing,
+            },
+        )
+
+    def search_messages(
+        self,
+        target_type: str,
+        target_name: str,
+        query: str,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        """Search message history for a substring (case-insensitive).
+
+        ``target_type`` is "room" for room history or "user" for a direct conversation.
+        ``target_name`` is the room name or the other user's username. ``query`` is the
+        substring to search for. ``limit`` caps the number of results (default 50, max 200).
+        Returns a response containing ``payload['messages']``.
+        """
+        return self.send_request(
+            ACTION_SEARCH_MESSAGES,
+            {
+                "target_type": target_type,
+                "target_name": target_name,
+                "query": query,
                 "limit": limit,
             },
         )

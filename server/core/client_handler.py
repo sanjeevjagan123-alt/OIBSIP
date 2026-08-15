@@ -21,6 +21,8 @@ from common.protocol_constants import (
     ACTION_PING,
     ACTION_REGISTER,
     ACTION_SEND_MESSAGE,
+    ACTION_SEARCH_MESSAGES,
+    ACTION_TYPING,
     ERROR_INVALID_REQUEST,
     ERROR_RATE_LIMIT_EXCEEDED,
     ERROR_ROOM_EXISTS,
@@ -32,6 +34,7 @@ from common.protocol_constants import (
     EVENT_PRESENCE_UPDATE,
     EVENT_RESPONSE,
     EVENT_ROOM_UPDATE,
+    EVENT_TYPING_UPDATE,
     STATUS_ERROR,
     STATUS_SUCCESS,
 )
@@ -199,6 +202,10 @@ class ClientHandler(threading.Thread):
             return self._handle_message_delivered(payload)
         elif action == ACTION_GET_HISTORY:
             return self._handle_get_history(payload)
+        elif action == ACTION_TYPING:
+            return self._handle_typing(payload)
+        elif action == ACTION_SEARCH_MESSAGES:
+            return self._handle_search_messages(payload)
         else:
             return {
                 "event": EVENT_ERROR,
@@ -678,6 +685,198 @@ class ClientHandler(threading.Thread):
             "action": ACTION_MESSAGE_DELIVERED,
             "status": STATUS_SUCCESS,
             "payload": {"message_id": message_id, "delivery_state": "delivered"},
+        }
+
+    def _handle_typing(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Handle typing indicator notifications.
+
+        Payload must contain:
+            target_type: "room" or "user"
+            target_name: name of the room or username of the target user
+            is_typing: bool indicating typing start/stop
+        """
+        auth_err = self._require_auth()
+        if auth_err is not None:
+            return auth_err
+
+        rate_err = self._check_rate_limit(ACTION_TYPING)
+        if rate_err is not None:
+            return rate_err
+
+        target_type = payload.get("target_type")
+        target_name = payload.get("target_name")
+        is_typing = payload.get("is_typing")
+
+        if target_type not in ("room", "user"):
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "target_type must be 'room' or 'user'.",
+            }
+        if not target_name or not isinstance(target_name, str):
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "target_name is required.",
+            }
+        if not isinstance(is_typing, bool):
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "is_typing must be a boolean.",
+            }
+
+        username = self.authenticated_user.get("username", "")
+        user_id = self.authenticated_user.get("user_id")
+        typing_event = {
+            "event": EVENT_TYPING_UPDATE,
+            "payload": {
+                "username": username,
+                "target_type": target_type,
+                "target_name": target_name.strip(),
+                "is_typing": is_typing,
+            },
+        }
+
+        if target_type == "room":
+            # Verify room exists
+            room = self.room_manager.db.get_room_by_name(target_name.strip())
+            if room is None:
+                return {
+                    "event": EVENT_ERROR,
+                    "status": STATUS_ERROR,
+                    "error_code": ERROR_ROOM_NOT_FOUND,
+                    "message": f"Room '{target_name}' does not exist.",
+                }
+            # Verify the authenticated user is a member of the room
+            members = self.room_manager._rooms.get(room["name"].lower(), set())
+            if user_id not in members:
+                return {
+                    "event": EVENT_ERROR,
+                    "status": STATUS_ERROR,
+                    "error_code": ERROR_INVALID_REQUEST,
+                    "message": "User is not a member of the room.",
+                }
+            # Broadcast to all members of the room (excluding the sender)
+            self.room_manager.broadcast_to_room(target_name.strip(), typing_event, exclude_user_id=user_id)
+        else:
+        # Direct message typing indicator - deliver only to the other participant if online
+            target_user = self.room_manager.db.get_user_by_username(target_name.strip())
+            if target_user is None:
+                return {
+                    "event": EVENT_ERROR,
+                    "status": STATUS_ERROR,
+                    "error_code": ERROR_USER_NOT_FOUND,
+                    "message": f"User '{target_name}' not found.",
+                }
+            target_user_id = target_user["id"]
+            if self.client_registry is not None:
+                target_handler = self.client_registry.get_client(target_user_id)
+                if target_handler is not None:
+                    try:
+                        send_frame(target_handler.client_socket, typing_event)
+                    except (OSError, ConnectionError) as exc:
+                        self.logger.warning("Failed to deliver typing event to '%s': %s", target_name, exc)
+
+        return {
+            "event": EVENT_RESPONSE,
+            "action": ACTION_TYPING,
+            "status": STATUS_SUCCESS,
+            "payload": {
+                "target_type": target_type,
+                "target_name": target_name.strip(),
+                "is_typing": is_typing,
+            },
+        }
+    def _handle_search_messages(self, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """Handle searching messages for a substring.
+
+        Payload must contain:
+
+        target_type: "room" or "user"
+        target_name: name of room or username of conversation partner
+        query: substring to search for (case-insensitive)
+        limit (optional): max number of results (default 50, clamped 1-200)
+        """
+        auth_err = self._require_auth()
+        if auth_err is not None:
+            return auth_err
+
+        rate_err = self._check_rate_limit(ACTION_SEARCH_MESSAGES)
+        if rate_err is not None:
+            return rate_err
+
+        target_type = payload.get("target_type")
+        target_name = payload.get("target_name")
+        query = payload.get("query")
+        limit = payload.get("limit", 50)
+
+        if target_type not in ("room", "user"):
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "target_type must be 'room' or 'user'.",
+            }
+        if not target_name or not isinstance(target_name, str):
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "target_name is required.",
+            }
+        if not query or not isinstance(query, str):
+            return {
+                "event": EVENT_ERROR,
+                "status": STATUS_ERROR,
+                "error_code": ERROR_INVALID_REQUEST,
+                "message": "query is required and must be a string.",
+            }
+        if not isinstance(limit, int) or limit <= 0:
+            limit = 50
+        if limit > 200:
+            limit = 200
+
+        # Resolve target and retrieve matching messages
+        messages: list[dict[str, Any]] = []
+        if target_type == "room":
+            room = self.room_manager.db.get_room_by_name(target_name.strip())
+            if room is None:
+                return {
+                    "event": EVENT_ERROR,
+                    "status": STATUS_ERROR,
+                    "error_code": ERROR_ROOM_NOT_FOUND,
+                    "message": f"Room '{target_name}' does not exist.",
+                }
+            # Ensure requester is a member of the room (access control)
+            user_id = self.authenticated_user.get("user_id")
+            members = self.room_manager._rooms.get(room["name"].lower(), set())
+            if user_id not in members:
+                # Not a member - return empty list
+                messages = []
+            else:
+                messages = self.room_manager.db.search_room_messages(room["id"], query, limit=limit)
+        else:
+            target_user = self.room_manager.db.get_user_by_username(target_name.strip())
+            if target_user is None:
+                return {
+                    "event": EVENT_ERROR,
+                    "status": STATUS_ERROR,
+                    "error_code": ERROR_USER_NOT_FOUND,
+                    "message": f"User '{target_name}' not found.",
+                }
+            requester_id = self.authenticated_user.get("user_id")
+            target_id = target_user["id"]
+            messages = self.room_manager.db.search_direct_messages(requester_id, target_id, query, limit=limit)
+
+        return {
+            "event": EVENT_RESPONSE,
+            "action": ACTION_SEARCH_MESSAGES,
+            "status": STATUS_SUCCESS,
+            "payload": {"messages": messages},
         }
 
     def _broadcast_presence_update(self, username: str, state: str, exclude_user_id: int | None = None) -> None:
