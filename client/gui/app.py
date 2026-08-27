@@ -1,15 +1,46 @@
-"""Tkinter-based GUI application for the chat client."""
+"""CustomTkinter-based GUI application for the chat client."""
 
 from __future__ import annotations
 
 import queue
 import threading
-import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox
 import logging
+import customtkinter as ctk
+from tkinter import messagebox
+from datetime import datetime
+
+from plyer import notification
 
 from client.core.client import ChatClient
 from common.config_loader import load_config
+
+# Simple emoji shortcode map – converts short textual codes to Unicode emojis
+EMOJI_MAP = {
+    ":smile:": "😊",
+    ":laughing:": "😆",
+    ":heart:": "❤️",
+    ":thumbsup:": "👍",
+    ":thumbsdown:": "👎",
+    ":sad:": "😢",
+    ":wink:": "😉",
+    ":fire:": "🔥",
+    ":clap:": "👏",
+    ":thinking:": "🤔",
+}
+
+
+def replace_emoji_shortcodes(text: str) -> str:
+    """Replace known shortcodes in *text* with their emoji equivalents.
+
+    The function iterates over :data:`EMOJI_MAP` and performs a simple
+    ``str.replace`` for each shortcode. It returns the transformed string.
+    """
+    for shortcode, emoji in EMOJI_MAP.items():
+        text = text.replace(shortcode, emoji)
+    return text
+
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
 
 
 class ChatApp:
@@ -18,83 +49,111 @@ class ChatApp:
     def __init__(self) -> None:
         self.logger = logging.getLogger("chat_app")
         self.config = load_config()
-        self.root = tk.Tk()
-        self.root.title("Oasis Chat")
-        self.root.geometry("800x600")
+        self.root = ctk.CTk()
+        self.root.title("Oasis")
+        self.root.geometry("1000x650")
+        self.root.minsize(800, 550)
 
         self.client = ChatClient(self.config.host, self.config.port)
         self.event_queue: "queue.Queue[dict]" = queue.Queue()
-
-        # Simple frames
-        self.login_frame = ttk.Frame(self.root)
-        self.chat_frame = ttk.Frame(self.root)
-
-        self._build_login()
-        self._build_chat()
-
-        self.login_frame.pack(fill=tk.BOTH, expand=True)
         self.listener_started = False
 
-        # Polling loop for events
+        # ---- Application state ----
+        self.current_user = None
+        self.current_target_type = "room"
+        self.current_target_name = "general"
+
+        self.rooms = []
+        self.online_users = set()
+
+        self.typing_users = set()
+
+        self.message_cache = {}
+        self.search_results = []
+
+        self.ui_ready = False
+
+
+        # Container frames
+        self.login_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        self.chat_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+
+        self._build_login()
+        self.login_frame.pack(fill="both", expand=True)
+
         self.root.after(100, self._process_events)
+
+    # ---- Login / Register Screen ----
 
     def _build_login(self) -> None:
         frm = self.login_frame
-        ttk.Label(frm, text="Username:").pack(pady=6)
-        self.username_var = tk.StringVar()
-        ttk.Entry(frm, textvariable=self.username_var).pack(pady=6)
 
-        ttk.Label(frm, text="Password:").pack(pady=6)
-        self.password_var = tk.StringVar()
-        ttk.Entry(frm, textvariable=self.password_var, show="*").pack(pady=6)
+        # Center card
+        card = ctk.CTkFrame(frm, width=380, corner_radius=16, fg_color="#111a2e")
+        card.place(relx=0.5, rely=0.5, anchor="center")
 
-        btn_frame = ttk.Frame(frm)
-        btn_frame.pack(pady=12)
-        ttk.Button(btn_frame, text="Register", command=self._on_register).grid(row=0, column=0, padx=6)
-        ttk.Button(btn_frame, text="Login", command=self._on_login).grid(row=0, column=1, padx=6)
+        ctk.CTkLabel(
+            card, text="Oasis",
+            font=ctk.CTkFont(size=28, weight="bold"),
+        ).pack(pady=(40, 10), padx=60)
 
-    def _build_chat(self) -> None:
-        frm = self.chat_frame
-        top = ttk.Frame(frm)
-        top.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(top, textvariable=tk.StringVar(value="Logged in as:" )).pack(side=tk.LEFT, padx=6)
-        self.current_user_label = ttk.Label(top, text="(not logged in)")
-        self.current_user_label.pack(side=tk.LEFT)
-        ttk.Button(top, text="Logout", command=self._on_logout).pack(side=tk.RIGHT, padx=6)
+        ctk.CTkLabel(
+            card, text="Sign in to continue",
+            font=ctk.CTkFont(size=13), text_color="#8a94a6",
+        ).pack(pady=(0, 30))
 
-        middle = ttk.Frame(frm)
-        middle.pack(fill=tk.BOTH, expand=True)
+        ctk.CTkLabel(
+            card, text="Mail ID",
+            font=ctk.CTkFont(size=12), text_color="#8a94a6", anchor="w",
+        ).pack(pady=(8, 2), padx=50, fill="x")
 
-        # Room list
-        rooms_frame = ttk.Frame(middle)
-        rooms_frame.pack(side=tk.LEFT, fill=tk.Y, padx=6, pady=6)
-        ttk.Label(rooms_frame, text="Rooms").pack()
-        self.rooms_listbox = tk.Listbox(rooms_frame, height=15)
-        self.rooms_listbox.pack()
-        ttk.Button(rooms_frame, text="Join", command=self._join_selected_room).pack(pady=6)
+        self.username_var = ctk.StringVar()
+        self.username_entry = ctk.CTkEntry(
+            card, textvariable=self.username_var,
+            width=280, height=42, corner_radius=10,
+        )
+        self.username_entry.pack(pady=(0, 8), padx=50)
 
-        # Chat area
-        chat_area = ttk.Frame(middle)
-        chat_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=6, pady=6)
-        self.chat_history = scrolledtext.ScrolledText(chat_area, state=tk.DISABLED)
-        self.chat_history.pack(fill=tk.BOTH, expand=True)
+        ctk.CTkLabel(
+            card, text="Password",
+            font=ctk.CTkFont(size=12), text_color="#8a94a6", anchor="w",
+        ).pack(pady=(8, 2), padx=50, fill="x")
 
-        bottom = ttk.Frame(frm)
-        bottom.pack(side=tk.BOTTOM, fill=tk.X)
-        self.msg_var = tk.StringVar()
-        ttk.Entry(bottom, textvariable=self.msg_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, pady=6)
-        ttk.Button(bottom, text="Send to Room", command=self._send_room_message).pack(side=tk.LEFT, padx=6)
-        ttk.Button(bottom, text="Send DM", command=self._send_direct_message).pack(side=tk.LEFT, padx=6)
+        self.password_var = ctk.StringVar()
+        self.password_entry = ctk.CTkEntry(
+            card, textvariable=self.password_var,
+            show="*", width=280, height=42, corner_radius=10,
+        )
+        self.password_entry.pack(pady=(0, 8), padx=50)
+        self.password_entry.bind("<Return>", lambda e: self._on_login())
+
+        self.login_btn = ctk.CTkButton(
+            card, text="Login", command=self._on_login,
+            width=280, height=42, corner_radius=10,
+        )
+        self.login_btn.pack(pady=(20, 10), padx=50)
+
+        self.register_btn = ctk.CTkButton(
+            card, text="Create Account", command=self._on_register,
+            width=280, height=42, corner_radius=10,
+            fg_color="transparent", border_width=1, border_color="#3a4a63",
+            hover_color="#1a2740",
+        )
+        self.register_btn.pack(pady=(0, 40), padx=50)
 
     # ---- GUI Actions ----
+
     def _on_register(self) -> None:
         username = self.username_var.get().strip()
         password = self.password_var.get().strip()
+        if not username or not password:
+            messagebox.showwarning("Missing info", "Enter both username and password.")
+            return
         try:
             self.client.connect()
             resp = self.client.register(username, password)
             if resp.get("status") == "success":
-                messagebox.showinfo("Register", "Registration successful. Please login.")
+                messagebox.showinfo("Registered", "Account created. Please login.")
             else:
                 messagebox.showerror("Register failed", resp.get("message", str(resp)))
         except Exception as exc:
@@ -103,6 +162,9 @@ class ChatApp:
     def _on_login(self) -> None:
         username = self.username_var.get().strip()
         password = self.password_var.get().strip()
+        if not username or not password:
+            messagebox.showwarning("Missing info", "Enter both username and password.")
+            return
         try:
             self.client.connect()
             if not self.listener_started:
@@ -111,64 +173,164 @@ class ChatApp:
                 self.listener_started = True
             resp = self.client.login(username, password)
             if resp.get("status") == "success":
-                self.current_user_label.config(text=username)
-                self.login_frame.forget()
-                self.chat_frame.pack(fill=tk.BOTH, expand=True)
-                # Populate rooms list (basic)
-                self.rooms_listbox.delete(0, tk.END)
-                self.rooms_listbox.insert(tk.END, "general")
-                # Auto-join handled by server; request history
-                hist = self.client.get_history("room", "general", limit=50)
-                self._append_history_messages(hist)
+                self.login_frame.pack_forget()
+                self._build_chat_placeholder()
+                self.chat_frame.pack(fill="both", expand=True)
             else:
                 messagebox.showerror("Login failed", resp.get("message", str(resp)))
         except Exception as exc:
             messagebox.showerror("Error", str(exc))
 
+    def _build_chat_placeholder(self) -> None:
+        for widget in self.chat_frame.winfo_children():
+            widget.destroy()
+
+        self.chat_frame.grid_columnconfigure(1, weight=1)
+        self.chat_frame.grid_rowconfigure(0, weight=1)
+
+        # ---- Sidebar (rooms) ----
+        sidebar = ctk.CTkFrame(self.chat_frame, width=220, corner_radius=0, fg_color="#0d1526")
+        sidebar.grid(row=0, column=0, sticky="nswe")
+        sidebar.grid_propagate(False)
+
+        ctk.CTkLabel(
+            sidebar, text="Rooms",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        ).pack(pady=(20, 10), padx=15, anchor="w")
+
+        self.rooms_listbox_frame = ctk.CTkScrollableFrame(sidebar, fg_color="transparent")
+        self.rooms_listbox_frame.pack(fill="both", expand=True, padx=10)
+
+        ctk.CTkButton(
+            sidebar, text="Logout", command=self._on_logout,
+            fg_color="transparent", border_width=1, border_color="#3a4a63",
+            hover_color="#1a2740", height=36,
+        ).pack(side="bottom", pady=15, padx=15, fill="x")
+
+        # ---- Main chat area ----
+        main = ctk.CTkFrame(self.chat_frame, corner_radius=0, fg_color="#161f36")
+        main.grid(row=0, column=1, sticky="nswe")
+        main.grid_rowconfigure(1, weight=1)
+        main.grid_columnconfigure(0, weight=1)
+
+        top_bar = ctk.CTkFrame(main, height=60, corner_radius=0, fg_color="#111a2e")
+        top_bar.grid(row=0, column=0, sticky="we")
+        self.current_room_label = ctk.CTkLabel(
+            top_bar, text="general",
+            font=ctk.CTkFont(size=16, weight="bold"),
+        )
+        self.current_room_label.pack(side="left", padx=20, pady=15)
+
+        self.chat_display = ctk.CTkTextbox(main, fg_color="#161f36", wrap="word", font=ctk.CTkFont(size=13))
+        self.chat_display.grid(row=1, column=0, sticky="nswe", padx=15, pady=10)
+        self.chat_display.configure(state="disabled")
+
+        bottom_bar = ctk.CTkFrame(main, height=60, corner_radius=0, fg_color="#111a2e")
+        bottom_bar.grid(row=2, column=0, sticky="we")
+        bottom_bar.grid_columnconfigure(0, weight=1)
+
+        self.msg_var = ctk.StringVar()
+        self.msg_entry = ctk.CTkEntry(
+            bottom_bar, textvariable=self.msg_var,
+            placeholder_text="Type a message...", height=42, corner_radius=10,
+        )
+        self.msg_entry.grid(row=0, column=0, sticky="we", padx=(15, 8), pady=10)
+        self.msg_entry.bind("<Return>", lambda e: self._send_room_message())
+
+        ctk.CTkButton(
+            bottom_bar, text="Send", command=self._send_room_message,
+            width=80, height=42, corner_radius=10,
+        ).grid(row=0, column=1, padx=(0, 15), pady=10)
+
+        self.current_room = "general"
+        self._load_rooms()
+        self._load_history()
+
+    def _load_rooms(self) -> None:
+        for widget in self.rooms_listbox_frame.winfo_children():
+            widget.destroy()
+        resp = self.client.get_rooms()
+        if resp.get("status") != "success":
+            return
+        rooms = resp.get("payload", {}).get("rooms", [])
+        for room in rooms:
+            name = room.get("name", "")
+            btn = ctk.CTkButton(
+                self.rooms_listbox_frame, text=f"# {name}",
+                anchor="w", fg_color="transparent", hover_color="#1a2740",
+                command=lambda n=name: self._switch_room(n),
+            )
+            btn.pack(fill="x", pady=2)
+
+    def _switch_room(self, room_name: str) -> None:
+        try:
+            self.client.join_room(room_name)
+        except Exception:
+            pass
+        self.current_room = room_name
+        self.current_room_label.configure(text=room_name)
+        self._load_history()
+
+    def _load_history(self) -> None:
+        print(
+            "DEBUG LOAD HISTORY:",
+            "current_room=", self.current_room,
+            "socket=", self.client._socket is not None,
+            "listener_active=", self.client._listener_active,
+            "listener_thread_alive=",
+            self.client._listener_thread.is_alive()
+            if self.client._listener_thread is not None
+            else None,
+        )
+        resp = self.client.get_history("room", self.current_room, limit=50)
+        self.chat_display.configure(state="normal")
+        self.chat_display.delete("1.0", "end")
+        if resp.get("status") == "success":
+            messages = resp.get("payload", {}).get("messages", [])
+            for m in messages:
+                sender = m.get("sender_username", "")
+                # Replace any emoji shortcodes in the message content before display
+                content = replace_emoji_shortcodes(m.get("content", ""))
+                timestamp_str = m.get("timestamp", "")
+                try:
+                    ts = datetime.fromisoformat(timestamp_str)
+                except Exception:
+                    try:
+                        ts = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+                    except Exception:
+                        ts = datetime.now()
+                time_prefix = ts.strftime("[%H:%M]")
+                self.chat_display.insert("end", f"{time_prefix} {sender}: {content}\n")
+        self.chat_display.configure(state="disabled")
+        self.chat_display.see("end")
+
+    def _send_room_message(self) -> None:
+        raw_content = self.msg_var.get().strip()
+        if not raw_content:
+            return
+        content = replace_emoji_shortcodes(raw_content)
+        resp = self.client.send_chat_message("room", self.current_room, content)
+        if resp.get("status") == "success":
+            self.msg_var.set("")
+            self.chat_display.configure(state="normal")
+            time_prefix = datetime.now().strftime("[%H:%M]")
+            self.chat_display.insert("end", f"{time_prefix} You: {content}\n")
+            self.chat_display.configure(state="disabled")
+            self.chat_display.see("end")
+        else:
+            messagebox.showerror("Send failed", resp.get("message", str(resp)))
+
     def _on_logout(self) -> None:
         try:
             self.client.disconnect()
         finally:
-            self.chat_frame.forget()
-            self.login_frame.pack(fill=tk.BOTH, expand=True)
-            self.current_user_label.config(text="(not logged in)")
+            self.chat_frame.pack_forget()
+            self.listener_started = False
+            self.login_frame.pack(fill="both", expand=True)
 
-    def _join_selected_room(self) -> None:
-        sel = self.rooms_listbox.curselection()
-        if not sel:
-            return
-        room = self.rooms_listbox.get(sel[0])
-        resp = self.client.join_room(room)
-        if resp.get("status") == "success":
-            messagebox.showinfo("Joined", f"Joined room {room}")
-        else:
-            messagebox.showerror("Join failed", resp.get("message", str(resp)))
+        # ---- Event handling ----
 
-    def _send_room_message(self) -> None:
-        content = self.msg_var.get().strip()
-        if not content:
-            return
-        resp = self.client.send_chat_message("room", "general", content)
-        if resp.get("status") == "success":
-            self.msg_var.set("")
-        else:
-            messagebox.showerror("Send failed", resp.get("message", str(resp)))
-
-    def _send_direct_message(self) -> None:
-        content = self.msg_var.get().strip()
-        if not content:
-            return
-        # For simplicity send to the username in username field
-        target = self.username_var.get().strip()
-        resp = self.client.send_chat_message("user", target, content)
-        if resp.get("status") == "success":
-            self.msg_var.set("")
-        else:
-            messagebox.showerror("Send failed", resp.get("message", str(resp)))
-
-    # ---- Event handling ----
     def _on_event(self, frame: dict) -> None:
-        # push to thread-safe queue for GUI thread
         try:
             self.event_queue.put(frame)
         except Exception:
@@ -178,42 +340,62 @@ class ChatApp:
         try:
             while True:
                 frame = self.event_queue.get_nowait()
-                self._handle_frame(frame)
-        except Exception:
+                self._handle_server_event(frame)
+        except queue.Empty:
             pass
         finally:
             self.root.after(100, self._process_events)
 
-    def _handle_frame(self, frame: dict) -> None:
+    def _handle_server_event(self, frame: dict) -> None:
+        """Handle asynchronous events received from the server."""
+
         event = frame.get("event")
+
         if event == "new_message":
-            payload = frame.get("payload", {})
-            sender = payload.get("sender_username") or payload.get("sender") or ""
-            content = payload.get("content")
-            ts = payload.get("timestamp", "")
-            self._append_chat_line(f"[{ts}] {sender}: {content}")
-        elif event == "room_update":
-            payload = frame.get("payload", {})
-            self._append_chat_line(f"[room] {payload}")
-        elif event == "response":
-            # ignore plain responses in the async loop
+            self._handle_new_message_event(frame)
+
+    def _handle_new_message_event(self, frame: dict) -> None:
+        payload = frame.get("payload", {})
+
+        target_type = payload.get("target_type")
+        target_name = payload.get("target_name")
+
+        sender = payload.get("sender_username", "")
+        content = replace_emoji_shortcodes(payload.get("content", ""))
+
+        # Show a desktop notification if the window is not focused,
+        # regardless of which room/target is currently open.
+        try:
+            if self.root.focus_displayof() is None:
+                notification.notify(
+                    title=f"New message in {target_name}",
+                    message=f"{sender}: {content}",
+                    app_name="Oasis",
+                    timeout=5,
+                )
+        except Exception:
             pass
-        else:
-            self._append_chat_line(f"[event] {frame}")
 
-    def _append_chat_line(self, text: str) -> None:
-        self.chat_history.configure(state=tk.NORMAL)
-        self.chat_history.insert(tk.END, text + "\n")
-        self.chat_history.configure(state=tk.DISABLED)
-        self.chat_history.yview(tk.END)
-
-    def _append_history_messages(self, resp: dict) -> None:
-        if resp.get("status") != "success":
+        if target_type != self.current_target_type:
             return
-        msgs = resp.get("payload", {}).get("messages", [])
-        for m in msgs:
-            line = f"[{m.get('timestamp')}] {m.get('sender_username')}: {m.get('content')}"
-            self._append_chat_line(line)
+
+        if target_name != self.current_target_name:
+            return
+
+        timestamp_str = payload.get("timestamp", "")
+        try:
+            ts = datetime.fromisoformat(timestamp_str)
+            time_prefix = ts.strftime("[%H:%M]")
+        except Exception:
+            time_prefix = datetime.now().strftime("[%H:%M]")
+
+        self.chat_display.configure(state="normal")
+        self.chat_display.insert(
+            "end",
+            f"{time_prefix} {sender}: {content}\n",
+        )
+        self.chat_display.configure(state="disabled")
+        self.chat_display.see("end")
 
     def run(self) -> None:
         self.root.protocol("WM_DELETE_WINDOW", self.shutdown)

@@ -225,17 +225,59 @@ class ChatClient:
         self._event_callbacks.append(callback)
 
     def start_listener(self) -> None:
-        """Start background thread that listens for server push events."""
-        if self._listener_thread is not None:
+        """Start the background listener thread."""
+        if self._listener_thread is not None and self._listener_thread.is_alive():
             return
+
+        if self._socket is None:
+            raise ConnectionError("Client is not connected to the server.")
 
         self._stop_listener.clear()
         self._listener_active = True
+
         self._listener_thread = threading.Thread(
             target=self._listener_loop,
             daemon=True,
         )
         self._listener_thread.start()
+
+    def _listener_loop(self) -> None:
+        """Background loop reading frames and dispatching events vs responses."""
+        while not self._stop_listener.is_set():
+            if self._socket is None:
+                break
+
+            try:
+                frame = recv_frame(self._socket)
+                print("DEBUG LISTENER FRAME:", frame)
+
+            except socket.timeout:
+                # An idle persistent chat connection is normal.
+                # Do not terminate the listener just because no data arrived.
+                continue
+
+            except (ConnectionError, OSError) as exc:
+                print("DEBUG LISTENER SOCKET ERROR:", repr(exc))
+                break
+
+            except Exception as exc:
+                print(
+                    "DEBUG LISTENER EXCEPTION:",
+                    type(exc).__name__,
+                    repr(exc),
+                )
+                break
+
+            if frame.get("event") == EVENT_RESPONSE or frame.get("event") == "error":
+                self._response_queue.put(frame)
+            else:
+                for callback in self._event_callbacks:
+                    try:
+                        callback(frame)
+                    except Exception:
+                        pass
+
+        self._listener_active = False
 
     def stop_listener(self) -> None:
         """Stop the background listener thread."""
@@ -246,29 +288,6 @@ class ChatClient:
             self._listener_thread.join(timeout=2.0)
             self._listener_thread = None
 
-    def _listener_loop(self) -> None:
-        """Background loop reading frames and dispatching events vs responses."""
-        while not self._stop_listener.is_set():
-            if self._socket is None:
-                break
-
-            try:
-                frame = recv_frame(self._socket)
-            except (ConnectionError, OSError):
-                break
-            except Exception:
-                break
-
-            # Determine if this is a response to a request or a push event.
-            if frame.get("event") == EVENT_RESPONSE or frame.get("event") == "error":
-                self._response_queue.put(frame)
-            else:
-                # Push event - invoke callbacks.
-                for callback in self._event_callbacks:
-                    try:
-                        callback(frame)
-                    except Exception:
-                        pass
 
     # ---- Connection Management ----
 

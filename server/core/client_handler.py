@@ -101,7 +101,7 @@ class ClientHandler(threading.Thread):
                         pass
                     break
 
-                self.logger.debug("Received request from %s:%s: action=%s", self.client_address[0], self.client_address[1], request.get("action"))
+                self.logger.debug("Received request from %s:%s: action=%s", self.client_address[0], self.client_address[1], request.get("action"))       
                 response = self._route_request(request)
                 if response is not None:
                     send_frame(self.client_socket, response)
