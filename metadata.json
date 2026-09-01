@@ -1,0 +1,6 @@
+{
+  "name": "Oasis Chat Application",
+  "description": "Real-time chat application with authentication, public rooms, direct messaging, message search, typing indicators, and emoji support.",
+  "requestFramePermissions": ["notifications"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
